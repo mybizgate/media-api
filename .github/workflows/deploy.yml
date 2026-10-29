@@ -1,0 +1,225 @@
+# MyBizGate Media API - production deployment
+#
+# push deploy -> GitHub Actions -> FTPS -> /home/mybizgat/app/media-api
+#
+# * The FTP credential (secret FTP_USERNAME) is a dedicated cPanel account whose
+#   home directory IS /home/mybizgat/app/media-api, so server-dir is "./" and the
+#   account cannot reach public_html/ or data/media-api/uploads/.
+# * The server-managed .env, runtime storage and bootstrap/cache/config.php are
+#   never uploaded and never deleted (dangerous-clean-slate stays false).
+# * CI writes bootstrap/deployment.json (commit SHA, timestamp); the health
+#   endpoint exposes it and the last step fails unless the live API reports the
+#   commit that was just pushed.
+name: Deploy Production
+
+on:
+  push:
+    branches:
+      - deploy
+  workflow_dispatch:
+
+concurrency:
+  group: production-${{ github.repository }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  PRODUCTION_URL: https://media-api.mybizgate.com
+  HEALTH_URL: https://media-api.mybizgate.com/api/v1/health
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup PHP 8.3
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: gd, mbstring, xml, curl, zip, fileinfo
+          coverage: none
+          tools: composer:v2
+
+      - name: Validate Composer
+        run: composer validate --no-check-publish
+
+      - name: Install dependencies (with dev, for the test suite)
+        run: composer install --prefer-dist --no-interaction --no-progress
+
+      - name: Create a throw-away CI environment (never the production .env)
+        run: |
+          cp .env.example .env
+          mkdir -p "$RUNNER_TEMP/media"
+          sed -i "s#^MEDIA_STORAGE_PATH=.*#MEDIA_STORAGE_PATH=$RUNNER_TEMP/media#" .env
+          php artisan key:generate --force --no-interaction
+
+      - name: Validate Laravel
+        run: |
+          php artisan --version
+          php artisan route:list
+          php artisan test
+
+      - name: Install production dependencies
+        run: |
+          composer install \
+            --no-dev \
+            --prefer-dist \
+            --no-interaction \
+            --no-progress \
+            --optimize-autoloader
+
+      - name: Prepare deployment package
+        run: |
+          rm -f .env
+          mkdir -p release
+
+          # bootstrap/cache/packages.php and services.php are rebuilt from the exact
+          # production vendor/ set above, so they ship; the environment caches
+          # (config.php, routes-*.php, events.php) never do.
+          rsync -a ./ release/ \
+            --exclude='.git/' \
+            --exclude='.github/' \
+            --exclude='release/' \
+            --exclude='deploy/' \
+            --exclude='.env' \
+            --exclude='.env.*' \
+            --exclude='tests/' \
+            --exclude='phpunit.xml' \
+            --exclude='node_modules/' \
+            --exclude='AUTO_DEPLOY_WF.md' \
+            --exclude='storage/logs/*' \
+            --exclude='storage/framework/cache/data/*' \
+            --exclude='storage/framework/sessions/*' \
+            --exclude='storage/framework/views/*' \
+            --exclude='storage/framework/testing/*' \
+            --exclude='bootstrap/cache/config.php' \
+            --exclude='bootstrap/cache/routes-*.php' \
+            --exclude='bootstrap/cache/events.php'
+
+          mkdir -p release/storage/logs
+          mkdir -p release/storage/framework/cache/data
+          mkdir -p release/storage/framework/sessions
+          mkdir -p release/storage/framework/views
+          mkdir -p release/bootstrap/cache
+
+          # Non-secret deployment identity read by GET /api/v1/health.
+          jq -n \
+            --arg commit "$GITHUB_SHA" \
+            --arg ref "$GITHUB_REF" \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --arg run_id "$GITHUB_RUN_ID" \
+            --arg run_number "$GITHUB_RUN_NUMBER" \
+            --arg deployed_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            '{commit: $commit, short: $commit[0:8], ref: $ref, repository: $repository, run_id: $run_id, run_number: $run_number, deployed_at: $deployed_at}' \
+            > release/bootstrap/deployment.json
+          cat release/bootstrap/deployment.json
+
+      - name: Verify deployment package
+        run: |
+          test -f release/artisan
+          test -f release/composer.json
+          test -f release/vendor/autoload.php
+          test -f release/bootstrap/app.php
+          test -f release/bootstrap/deployment.json
+          test -f release/routes/api.php
+          test -d release/app
+          test -d release/config
+
+          test ! -e release/.env
+          test ! -e release/bootstrap/cache/config.php
+          test ! -d release/tests
+          test ! -d release/deploy
+          test -z "$(find release -name '.env' -o -name '.env.*' ! -name '.env.example')"
+          test -z "$(find release/vendor -maxdepth 1 -name 'phpunit' -o -maxdepth 1 -name 'mockery')"
+
+          jq -e --arg sha "$GITHUB_SHA" '.commit == $sha' release/bootstrap/deployment.json
+          (cd release && php artisan --version)
+
+          echo "Package: $(find release -type f | wc -l) files, $(du -sh release | cut -f1)"
+
+      - name: Deploy Laravel via FTPS
+        uses: SamKirkland/FTP-Deploy-Action@v4.4.0
+        with:
+          server: ${{ secrets.FTP_SERVER }}
+          username: ${{ secrets.FTP_USERNAME }}
+          password: ${{ secrets.FTP_PASSWORD }}
+          protocol: ftps
+          port: 21
+          local-dir: ./release/
+          # FTP_USERNAME is rooted at /home/mybizgat/app/media-api (see header).
+          server-dir: ./
+          dangerous-clean-slate: false
+          timeout: 600000
+          exclude: |
+            **/.git*
+            **/.git*/**
+            **/.env
+            **/.env.*
+            **/storage/logs/**
+            **/storage/framework/cache/data/**
+            **/storage/framework/sessions/**
+            **/storage/framework/views/**
+            **/storage/framework/testing/**
+            **/bootstrap/cache/config.php
+            **/bootstrap/cache/routes-*.php
+            **/bootstrap/cache/events.php
+
+      - name: Verify production runs the pushed commit
+        run: |
+          EXPECTED="${GITHUB_SHA::8}"
+          LIVE=""
+          RESPONSE=""
+
+          for attempt in $(seq 1 18); do
+            RESPONSE=$(curl -sS --max-time 30 \
+              -H "Cache-Control: no-cache" \
+              -H "Pragma: no-cache" \
+              "${HEALTH_URL}?nocache=${GITHUB_SHA}-${attempt}" || true)
+            LIVE=$(printf '%s' "$RESPONSE" | jq -r '.deployment.commit // empty' 2>/dev/null || true)
+            echo "attempt ${attempt}: live commit '${LIVE}' (expected '${EXPECTED}')"
+            if [ "$LIVE" = "$EXPECTED" ]; then
+              break
+            fi
+            sleep 10
+          done
+
+          printf '%s\n' "$RESPONSE" | jq .
+
+          if [ "$LIVE" != "$EXPECTED" ]; then
+            echo "::error::Production reports commit '${LIVE}', expected '${EXPECTED}'. Deployment NOT verified."
+            exit 1
+          fi
+
+          printf '%s' "$RESPONSE" | jq -e '
+            .status == "ok"
+            and .service == "MyBizGate Media API"
+            and .environment == "production"
+            and .storage == true
+            and .gd == true
+            and .webp == true
+          ' > /dev/null || { echo "::error::Health checks failed after deployment."; exit 1; }
+
+          echo "Production is running ${EXPECTED} (deployed_at $(printf '%s' "$RESPONSE" | jq -r '.deployment.deployed_at'))."
+
+      - name: Verify existing media survived (repository variable SMOKE_MEDIA_ID)
+        env:
+          SMOKE_MEDIA_ID: ${{ vars.SMOKE_MEDIA_ID }}
+        run: |
+          if [ -z "$SMOKE_MEDIA_ID" ]; then
+            echo "SMOKE_MEDIA_ID is not set; skipping persistent media check."
+            exit 0
+          fi
+          for suffix in "" "/thumbnail" "/metadata" "/download"; do
+            CODE=$(curl -sS -o /dev/null --max-time 30 -w '%{http_code}' \
+              -H "Cache-Control: no-cache" \
+              "${PRODUCTION_URL}/api/v1/media/${SMOKE_MEDIA_ID}${suffix}?nocache=${GITHUB_SHA}")
+            echo "GET /api/v1/media/${SMOKE_MEDIA_ID}${suffix} -> ${CODE}"
+            test "$CODE" = "200"
+          done
