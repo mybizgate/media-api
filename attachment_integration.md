@@ -36,6 +36,7 @@ Vue / mobile UI ──► client-api   (products, services, users …  + optiona
 | `GET` | `/media/{id}/metadata` | optional | JSON of the item |
 | `GET` | `/media/{id}/download` | optional | **bytes**, `Content-Disposition: attachment; filename=<original>` |
 | `PUT` | `/media/{id}` (or `POST` with `_method=PUT`) | required | JSON; replaces the content, **keeps the id** |
+| `PATCH` | `/media/{id}` (or `POST` with `_method=PATCH`) | required | JSON; sets or clears `entity_id`, files untouched |
 | `DELETE` | `/media/{id}` | required | `{"success":true,"data":{"id":"…","deleted":true}}` |
 
 Read rules: public media is readable by URL alone, with `Cache-Control: public, max-age=86400`, so `view_url` and
@@ -96,11 +97,19 @@ Response (`201`; `GET /media/{id}/metadata` returns the same object with `200`):
 Documents have `type: "file"`, `width`/`height`/`thumbnail_url` are `null`. There is **no `status` field**: an item
 that exists is ready.
 
+If the business record does not exist yet when the photo is uploaded, upload without `entity_id` and link it later:
+
+```
+PATCH /media/{id}        (X-Client-Code: lzhub, JSON or form body)
+{"entity_id": "101"}     → 200 with the updated item; {"entity_id": ""} clears the link
+```
+
 ## 4. Linking files to business records
 
 ### Option A — no table: use `module` + `entity_id` (simplest, use this first)
 
-Upload with `module=products&entity_id=101`. To show a product's images:
+Upload with `module=products&entity_id=101` (or upload first and `PATCH` the `entity_id` once the product is
+created). To show a product's images:
 
 ```
 GET /media?module=products&entity_id=101&media_type=image   (X-Client-Code: lzhub)
@@ -211,6 +220,19 @@ class MediaApiClient
         return $response->json('data');
     }
 
+    /** Link an already uploaded item to a record (null clears the link). */
+    public function assign(string $mediaId, string $tenant, ?string $entityId): array
+    {
+        $response = $this->request($tenant)
+            ->patch($this->url("/media/{$mediaId}"), ['entity_id' => $entityId ?? '']);
+
+        if ($response->status() === 404) {
+            throw ValidationException::withMessages(['media_id' => 'Media not found for this tenant.']);
+        }
+
+        return $response->throw()->json('data');
+    }
+
     public function delete(string $mediaId, string $tenant): void
     {
         $this->request($tenant)->delete($this->url("/media/{$mediaId}"))->throw();
@@ -223,13 +245,17 @@ Linking an id the frontend uploaded directly (CORS already allows `https://*.myb
 1. Derive the tenant server-side (never from the request body).
 2. Load the business record inside that tenant and authorise the user.
 3. `$data = $mediaApi->metadata($mediaId, $tenant)`; check `data.type === 'image'` for photo roles.
-4. Insert/replace the attachment row (Option B) or just record the id on the entity.
-5. Return `view_url` / `thumbnail_url` from the metadata; never paths.
+4. If `data.entity_id` is empty or differs, call `$mediaApi->assign($mediaId, $tenant, (string) $record->getKey())`
+   so media-api's own listing stays correct.
+5. Insert/replace the attachment row (Option B) or just record the id on the entity.
+6. Return `view_url` / `thumbnail_url` from the metadata; never paths.
 
-Two upload patterns are both valid: **browser → media-api → id → consuming API** (recommended; fewer bytes through
-client-api), or **browser → consuming API → media-api** when the file and the record must be created together:
-upload first, then create the record and the link in one DB transaction; if the DB step fails, log the orphaned
-`media_id` for cleanup.
+Two upload patterns are both valid:
+
+- **Browser → media-api → id → consuming API** (recommended; fewer bytes through client-api). For a new product the
+  browser uploads without `entity_id`, the consuming API creates the product, then calls `assign()` with the new id.
+- **Browser → consuming API → media-api** when the file and the record must be created together: upload first, then
+  create the record and the link in one DB transaction; if the DB step fails, log the orphaned `media_id` for cleanup.
 
 ## 6. Security notes
 
@@ -244,6 +270,7 @@ upload first, then create the record and the link in one DB transaction; if the 
 ## 7. Replace, detach, delete
 
 - **Replace content, keep id**: `PUT /media/{id}` with a new `file` (and optional `visibility`). Links do not change.
+- **Move to another record, keep id and file**: `PATCH /media/{id}` with the new `entity_id`.
 - **Detach**: delete the attachment row only.
 - **Delete file**: `DELETE /media/{id}` only when no record in any consuming API references the id. Nothing in
   media-api tracks usage, so the caller is responsible for that check.
@@ -252,7 +279,8 @@ upload first, then create the record and the link in one DB transaction; if the 
 
 ## 8. Checklist for a new consuming API
 
-- [ ] Uploads send `file`, `module`, and `entity_id` (public visibility by default).
+- [ ] Uploads send `file`, `module`, and `entity_id` (public visibility by default); uploads made before the record
+      exists are linked afterwards with `PATCH /media/{id}`.
 - [ ] Only `media_id` (26-char lowercase ULID) is stored; no paths, filenames or bytes in business tables.
 - [ ] Linking an existing id goes through `GET /media/{id}/metadata` with the tenant header and checks `data.tenant`
       and `data.type`.
@@ -265,8 +293,9 @@ upload first, then create the record and the link in one DB transaction; if the 
 ## 9. Prompt for a future coding task
 
 > Implement attachment support for `[ENTITY]` in `[CONSUMING-API]` following `media-api/attachment_integration.md`.
-> Use `X-Client-Code` as the tenant, upload with `file` + `module` + `entity_id`, store only the returned
-> `data.id`, verify existing ids with `GET /media/{id}/metadata` and `data.tenant`, and expose
+> Use `X-Client-Code` as the tenant, upload with `file` + `module` + `entity_id` (or `PATCH /media/{id}` with
+> `entity_id` once the record exists), store only the returned `data.id`, verify existing ids with
+> `GET /media/{id}/metadata` and `data.tenant`, and expose
 > `view_url` / `thumbnail_url` from media-api instead of paths. All media is public; no caller authentication is
 > needed on media-api. Prefer `module`/`entity_id` listing; add a `media_attachments` table only if
 > primary/gallery roles or ordering are required. Add tests with `Http::fake()`. Do not deploy without confirmation.

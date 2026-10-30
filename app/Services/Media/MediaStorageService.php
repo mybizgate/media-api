@@ -14,7 +14,7 @@ use Illuminate\Support\Str;
 use Throwable;
 
 /**
- * Orchestrates upload, replace and delete. New content is always built in a
+ * Orchestrates upload, replace, assign and delete. New content is always built in a
  * staging directory next to its final location and moved into place with a
  * rename, so a failed upload never leaves a half-written media item behind
  * and a replacement only discards the old files after the new ones exist.
@@ -146,6 +146,28 @@ class MediaStorageService
 
         if ($retired !== null) {
             $this->discard($retired);
+        }
+
+        return $media;
+    }
+
+    /**
+     * Re-point an existing media item at a business record (or clear the link
+     * with null). Only metadata.json changes; files are untouched.
+     */
+    public function assign(MediaData $existing, ?string $entityId): MediaData
+    {
+        $media = $existing->with([
+            'entityId' => $this->paths->assertEntityId($entityId),
+            'updatedAt' => CarbonImmutable::now(),
+        ]);
+
+        try {
+            $this->repository->save($media);
+        } catch (Throwable $e) {
+            $this->logFailure('assign', $media, $e);
+
+            throw $e instanceof MediaException ? $e : MediaException::server('The media could not be updated.');
         }
 
         return $media;

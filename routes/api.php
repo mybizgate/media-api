@@ -39,6 +39,12 @@ Route::prefix('v1')->group(function () {
             ->where('mediaId', MediaController::ID_PATTERN)
             ->name('media.update');
 
+        // Metadata-only update: link the media to a business record after the
+        // fact (e.g. a product created once its photo was already uploaded).
+        Route::patch('/media/{mediaId}', [MediaController::class, 'assign'])
+            ->where('mediaId', MediaController::ID_PATTERN)
+            ->name('media.assign');
+
         Route::delete('/media/{mediaId}', [MediaController::class, 'destroy'])
             ->where('mediaId', MediaController::ID_PATTERN)
             ->name('media.destroy');

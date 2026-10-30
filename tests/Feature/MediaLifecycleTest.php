@@ -106,6 +106,60 @@ class MediaLifecycleTest extends TestCase
         $this->getJson('/api/v1/media/'.$data['id'].'/metadata')->assertOk()->assertJsonPath('data.width', 800);
     }
 
+    public function test_assign_links_existing_media_to_an_entity_without_touching_files(): void
+    {
+        $data = $this->upload($this->imageFile('jpeg', 640, 480));
+        $this->assertNull($data['entity_id']);
+
+        $dir = $this->mediaDirectory($data);
+        $image = file_get_contents("$dir/image.webp");
+        $thumb = file_get_contents("$dir/thumb.webp");
+
+        $response = $this->patchJson('/api/v1/media/'.$data['id'], ['entity_id' => 'PRD101'], $this->tenantHeaders());
+
+        $response->assertOk()
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('data.id', $data['id'])
+            ->assertJsonPath('data.entity_id', 'PRD101')
+            ->assertJsonPath('data.module', 'products')
+            ->assertJsonPath('data.width', 640)
+            ->assertJsonPath('data.created_at', $data['created_at']);
+
+        $this->assertSame($image, file_get_contents("$dir/image.webp"));
+        $this->assertSame($thumb, file_get_contents("$dir/thumb.webp"));
+        $this->assertSame('PRD101', json_decode(file_get_contents("$dir/metadata.json"), true)['entity_id']);
+        $this->assertSame([], glob("$dir.*"));
+
+        $this->getJson('/api/v1/media?module=products&entity_id=PRD101', $this->tenantHeaders())
+            ->assertJsonPath('meta.total', 1)->assertJsonPath('data.0.id', $data['id']);
+
+        // Form-encoded bodies and POST + _method=PATCH work for browsers too.
+        $this->patch('/api/v1/media/'.$data['id'], ['entity_id' => 'PRD102'], $this->tenantHeaders())
+            ->assertOk()->assertJsonPath('data.entity_id', 'PRD102');
+        $this->post('/api/v1/media/'.$data['id'], ['_method' => 'PATCH', 'entity_id' => 'PRD103'], $this->tenantHeaders())
+            ->assertOk()->assertJsonPath('data.entity_id', 'PRD103');
+
+        // An empty value clears the link.
+        $this->patchJson('/api/v1/media/'.$data['id'], ['entity_id' => ''], $this->tenantHeaders())
+            ->assertOk()->assertJsonPath('data.entity_id', null);
+        $this->getJson('/api/v1/media?entity_id=PRD103', $this->tenantHeaders())->assertJsonPath('meta.total', 0);
+    }
+
+    public function test_assign_validates_input_and_is_tenant_scoped(): void
+    {
+        $data = $this->upload($this->imageFile(), ['entity_id' => 'PRD001']);
+        $url = '/api/v1/media/'.$data['id'];
+
+        $this->patchJson($url, [], $this->tenantHeaders())->assertStatus(422)->assertJsonPath('success', false);
+        $this->patchJson($url, ['entity_id' => '../etc'], $this->tenantHeaders())->assertStatus(422);
+        $this->patchJson($url, ['entity_id' => str_repeat('a', 101)], $this->tenantHeaders())->assertStatus(422);
+        $this->patchJson($url, ['entity_id' => 'PRD002'])->assertStatus(400);
+        $this->patchJson($url, ['entity_id' => 'PRD002'], $this->tenantHeaders('otherco'))->assertNotFound();
+        $this->patchJson('/api/v1/media/'.str_repeat('0', 26), ['entity_id' => 'PRD002'], $this->tenantHeaders())->assertNotFound();
+
+        $this->getJson($url.'/metadata', $this->tenantHeaders())->assertJsonPath('data.entity_id', 'PRD001');
+    }
+
     public function test_listing_filters_and_paginates(): void
     {
         $a = $this->upload($this->imageFile('jpeg', 100, 100), ['module' => 'products', 'entity_id' => 'PRD001']);

@@ -6,6 +6,7 @@ use App\DTO\Media\MediaData;
 use App\Exceptions\MediaException;
 use App\Http\Controllers\Controller;
 use App\Http\Middleware\ResolveTenant;
+use App\Http\Requests\AssignMediaRequest;
 use App\Http\Requests\ReplaceMediaRequest;
 use App\Http\Requests\UploadMediaRequest;
 use App\Http\Resources\MediaResource;
@@ -118,6 +119,15 @@ class MediaController extends Controller
         $media = $this->owned($request, $mediaId);
 
         $media = $this->storage->replace($media, $request->file('file'), $request->input('visibility'));
+
+        return (new MediaResource($media))->response($request);
+    }
+
+    public function assign(AssignMediaRequest $request, string $mediaId): JsonResponse
+    {
+        $media = $this->owned($request, $mediaId);
+
+        $media = $this->storage->assign($media, $request->input('entity_id'));
 
         return (new MediaResource($media))->response($request);
     }

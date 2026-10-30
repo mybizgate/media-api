@@ -106,6 +106,7 @@ Base URL: `/api/v1`. Tenant identification is the `X-Client-Code` header (`^[a-z
 | GET | `/media/{id}/metadata` | JSON metadata and URLs |
 | GET | `/media/{id}/download` | `Content-Disposition: attachment` with the original filename |
 | PUT | `/media/{id}` | replace content, keep the id (POST with `_method=PUT` also works) |
+| PATCH | `/media/{id}` | set or clear `entity_id` without re-uploading (JSON or form body; POST with `_method=PATCH` also works) |
 | DELETE | `/media/{id}` | remove files, metadata and the media directory |
 
 Images (JPEG, PNG, WebP; AVIF when GD supports it) are resized to fit 1600x1600, converted to WebP and the original is discarded. Documents (PDF, TXT, CSV, DOC, DOCX, XLS, XLSX) keep their extension; executables, scripts, HTML, SVG and archives are rejected after server-side MIME detection.
