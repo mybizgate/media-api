@@ -53,4 +53,12 @@ class HealthTest extends TestCase
     {
         $this->getJson('/')->assertOk()->assertJsonPath('service', 'MyBizGate Media API');
     }
+
+    public function test_ping_route_responds(): void
+    {
+        $this->getJson('/api/v1/ping')
+            ->assertOk()
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('data.pong', true);
+    }
 }

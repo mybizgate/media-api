@@ -8,6 +8,12 @@ Route::prefix('v1')->group(function () {
 
     Route::get('/health', HealthController::class);
 
+    // Dummy route used to verify that a deployment reached production.
+    Route::get('/ping', fn () => response()->json([
+        'success' => true,
+        'data' => ['pong' => true, 'time' => now()->toIso8601String()],
+    ]))->name('ping');
+
     // Read endpoints: public media needs no header; private media and tenant
     // scoping use X-Client-Code when it is present (see MediaController).
     Route::get('/media/{mediaId}', [MediaController::class, 'show'])
