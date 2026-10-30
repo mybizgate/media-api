@@ -1,15 +1,12 @@
-# MyBizGate Media API - production deployment
+# MyBizGate Media API - application-only production deployment
 #
-# Push to deploy -> GitHub Actions -> FTPS -> /home/mybizgat/app/media-api
+# Push branch 'deploy' -> test Laravel -> deploy PHP application files via FTPS.
+# The application and its vendor/ dependencies have already been installed on Shinjiru.
 #
-# Prerequisite: the production server already has a working Laravel installation,
-# including vendor/ installed manually (e.g., with FileZilla).
-# This workflow deploys APPLICATION CODE ONLY, not Composer dependencies.
-# If composer.lock changes, update production vendor/ separately first.
-#
-# The dedicated FTP user's home directory is /home/mybizgat/app/media-api.
-# Production .env, vendor/, storage/, and bootstrap/cache/ are NEVER synced.
-# Uploaded media lives outside this FTP root and is left untouched.
+# The dedicated FTP account must be rooted at /home/mybizgat/app/media-api.
+# NEVER sync production .env, vendor/, storage/ or bootstrap/cache/.
+# Uploaded media is outside this FTP root at /data/media-api/uploads/.
+# IMPORTANT: If composer.lock changes, update production vendor/ separately before deploying.
 
 name: Deploy Production
 
@@ -34,7 +31,7 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     environment: production
-    timeout-minutes: 90
+    timeout-minutes: 45
 
     steps:
       - name: Checkout
@@ -72,7 +69,7 @@ jobs:
           rm -f .env
           mkdir -p release
 
-          # Dependencies and server-managed files are intentionally omitted.
+          # Do not package dependencies or directories owned by the production server.
           rsync -a ./ release/ \
             --exclude='.git/' \
             --exclude='.github/' \
@@ -91,6 +88,9 @@ jobs:
             --exclude='database/*.sqlite' \
             --exclude='database/*.sqlite-*'
 
-          # Health endpoint uses this to confirm the deployed Git commit.
+          # The health endpoint exposes this commit to verify a real deployment.
+          mkdir -p release/bootstrap
           jq -n \
             --arg commit "$GITHUB_SHA" \
+            --arg ref "$GITHUB_REF" \
+            --arg repository "$GITHUB_REPOSITORY" \
