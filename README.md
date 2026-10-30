@@ -160,10 +160,13 @@ Persistent media:        /home/mybizgat/data/media-api/uploads   (not touched by
 Production health:       https://media-api.mybizgate.com/api/v1/health
 ```
 
-The workflow installs PHP 8.3 + Composer, runs `php artisan test`, builds `vendor/` with `composer install --no-dev`,
-packages the application into `release/` (no `.env`, no tests, no runtime caches) and uploads it over FTPS with
-`SamKirkland/FTP-Deploy-Action` (`dangerous-clean-slate: false`, so nothing unknown on the server is deleted).
-Composer is never run on the hosting account.
+The workflow installs PHP 8.3 + Composer, runs `php artisan test`, packages the **application code only** into
+`release/` (no `vendor/`, no `.env`, no tests, no runtime caches) and uploads it over FTPS with
+`SamKirkland/FTP-Deploy-Action` (`dangerous-clean-slate: false` and `vendor/`, `storage/`, `.env`,
+`bootstrap/cache/` excluded, so nothing server-managed is ever uploaded or deleted). Uploading `vendor/` over this
+host's FTPS (about one file per second, with TLS data-socket errors after ~50 minutes) is not viable, so
+**`vendor/` is server-managed**: it was installed once on the server and must be updated by hand (upload a local
+`composer install --no-dev` result) whenever `composer.lock` changes. Composer is never run on the hosting account.
 
 **`.env` is server-managed and is never deployed.** `/home/mybizgat/app/media-api/.env` (with `APP_KEY`,
 `APP_ENV=production`, `MEDIA_STORAGE_PATH`) survives every deployment, as do `storage/logs/`,
@@ -171,8 +174,8 @@ Composer is never run on the hosting account.
 
 Deployment identity: CI writes `bootstrap/deployment.json` (`commit`, `deployed_at`; no secrets) and the health
 endpoint returns `"deployment": {"commit": "<8-char sha>", "deployed_at": "..."}` (`null` locally). The last
-workflow step fails unless the live endpoint reports the commit that was just pushed and still reports
-`"environment": "production"`. Set the repository variable `SMOKE_MEDIA_ID` to a public media id to also verify
+workflow fails unless the live endpoint reports the commit that was just pushed and still reports
+`"environment": "production"`, and unless `GET /api/v1/ping` answers `{"success": true, "data": {"pong": true}}`. Set the repository variable `SMOKE_MEDIA_ID` to a public media id to also verify
 that existing preview / thumbnail / metadata / download URLs keep working after each deploy.
 
 GitHub secrets (repository or `production` environment):
@@ -206,7 +209,7 @@ mkdir -p /home/mybizgat/public_html/media-api
 chmod -R u+rwX,go-rwx /home/mybizgat/data/media-api
 ```
 
-First-time setup only: create `/home/mybizgat/app/media-api/.env` with the production values above (generate `APP_KEY` with `php artisan key:generate --show` locally) and make `storage/` and `bootstrap/cache/` writable. Code and `vendor/` then arrive through the deployment workflow below. Avoid `config:cache` / `route:cache` on the server: the cache files are deliberately left alone by deployments and would go stale.
+First-time setup only: create `/home/mybizgat/app/media-api/.env` with the production values above (generate `APP_KEY` with `php artisan key:generate --show` locally) and make `storage/` and `bootstrap/cache/` writable, and upload `vendor/` (from a local `composer install --no-dev`). Code then arrives through the deployment workflow. Avoid `config:cache` / `route:cache` on the server: the cache files are deliberately left alone by deployments and would go stale.
 
 ## Backup
 

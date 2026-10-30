@@ -94,3 +94,98 @@ jobs:
           test -f release/artisan
           test -f release/bootstrap/app.php
           test -f release/bootstrap/deployment.json
+          test -f release/routes/api.php
+          test ! -e release/.env
+          test ! -d release/vendor
+          test ! -d release/storage
+          test ! -d release/tests
+          du -sh release
+
+      # Only the application code is uploaded. vendor/, storage/, .env and
+      # bootstrap/cache/ are server-managed and excluded here as well, so the
+      # sync can never delete them even if a stale state file lists them.
+      - name: Deploy Laravel via FTPS
+        uses: SamKirkland/FTP-Deploy-Action@v4.4.0
+        with:
+          server: ${{ secrets.FTP_SERVER }}
+          username: ${{ secrets.FTP_USERNAME }}
+          password: ${{ secrets.FTP_PASSWORD }}
+          protocol: ftps
+          port: 21
+          local-dir: ./release/
+          # FTP_USERNAME is rooted at /home/mybizgat/app/media-api (see header).
+          server-dir: ./
+          state-name: .ftp-deploy-sync-state.json
+          dangerous-clean-slate: false
+          log-level: minimal
+          timeout: 120000
+          exclude: |
+            **/.git*
+            **/.git*/**
+            **/.env
+            **/.env.*
+            **/vendor/**
+            **/storage/**
+            **/bootstrap/cache/**
+            **/node_modules/**
+
+      - name: Verify production runs the pushed commit
+        run: |
+          EXPECTED="${GITHUB_SHA::8}"
+          LIVE=""
+          RESPONSE=""
+
+          for attempt in $(seq 1 18); do
+            RESPONSE=$(curl -sS --max-time 30 \
+              -H "Cache-Control: no-cache" \
+              -H "Pragma: no-cache" \
+              "${HEALTH_URL}?nocache=${GITHUB_SHA}-${attempt}" || true)
+            LIVE=$(printf '%s' "$RESPONSE" | jq -r '.deployment.commit // empty' 2>/dev/null || true)
+            echo "attempt ${attempt}: live commit '${LIVE}' (expected '${EXPECTED}')"
+            if [ "$LIVE" = "$EXPECTED" ]; then
+              break
+            fi
+            sleep 10
+          done
+
+          printf '%s\n' "$RESPONSE" | jq .
+
+          if [ "$LIVE" != "$EXPECTED" ]; then
+            echo "::error::Production reports commit '${LIVE}', expected '${EXPECTED}'. Deployment NOT verified."
+            exit 1
+          fi
+
+          printf '%s' "$RESPONSE" | jq -e '
+            .status == "ok"
+            and .service == "MyBizGate Media API"
+            and .environment == "production"
+            and .storage == true
+            and .gd == true
+            and .webp == true
+          ' > /dev/null || { echo "::error::Health checks failed after deployment."; exit 1; }
+
+          echo "Production is running ${EXPECTED} (deployed_at $(printf '%s' "$RESPONSE" | jq -r '.deployment.deployed_at'))."
+
+      - name: Verify ping route is live
+        run: |
+          PING=$(curl -sS --max-time 30 -H "Cache-Control: no-cache" \
+            "${PRODUCTION_URL}/api/v1/ping?nocache=${GITHUB_SHA}")
+          printf '%s\n' "$PING" | jq .
+          printf '%s' "$PING" | jq -e '.success == true and .data.pong == true' > /dev/null \
+            || { echo "::error::GET /api/v1/ping did not answer pong."; exit 1; }
+
+      - name: Verify existing media survived (repository variable SMOKE_MEDIA_ID)
+        env:
+          SMOKE_MEDIA_ID: ${{ vars.SMOKE_MEDIA_ID }}
+        run: |
+          if [ -z "$SMOKE_MEDIA_ID" ]; then
+            echo "SMOKE_MEDIA_ID is not set; skipping persistent media check."
+            exit 0
+          fi
+          for suffix in "" "/thumbnail" "/metadata" "/download"; do
+            CODE=$(curl -sS -o /dev/null --max-time 30 -w '%{http_code}' \
+              -H "Cache-Control: no-cache" \
+              "${PRODUCTION_URL}/api/v1/media/${SMOKE_MEDIA_ID}${suffix}?nocache=${GITHUB_SHA}")
+            echo "GET /api/v1/media/${SMOKE_MEDIA_ID}${suffix} -> ${CODE}"
+            test "$CODE" = "200"
+          done

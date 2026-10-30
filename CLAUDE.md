@@ -78,12 +78,13 @@ the faked disk. The default tenant is `lzhub`. Feature tests exercise HTTP end t
 
 ## Deployment (read before touching `.github/workflows/deploy.yml` or `deploy/`)
 
-- `main` is development, `deploy` is production. Pushing `deploy` runs the workflow: tests, `composer install
-  --no-dev`, package into `release/`, FTPS upload to `/home/mybizgat/app/media-api`, then a health check that
+- `main` is development, `deploy` is production. Pushing `deploy` runs the workflow: tests, package the app code (no
+  `vendor/`) into `release/`, FTPS upload to `/home/mybizgat/app/media-api`, then a health check that
   **fails unless the live `/api/v1/health` reports the pushed commit** (via `bootstrap/deployment.json`, which
   CI writes and `App\Support\DeploymentInfo` reads). Release flow: `git checkout deploy && git merge --ff-only main && git push origin deploy`.
-- The production `.env`, `storage/`, and `bootstrap/cache/config.php` are server-managed and excluded from both
-  the package and the upload. Never add them, and never set `dangerous-clean-slate: true`.
+- The production `.env`, `vendor/`, `storage/`, and `bootstrap/cache/config.php` are server-managed and excluded
+  from both the package and the upload (`vendor/` must be refreshed by hand when `composer.lock` changes; FTPS on
+  this host cannot upload it). Never add them, and never set `dangerous-clean-slate: true`.
 - `deploy/public_html/` holds the only files that belong in the document root (`index.php` resolves the app at
   `../../app/media-api`, `.user.ini` sets upload limits). The workflow never touches `public_html/` or the uploads
   directory. Do not run `config:cache`/`route:cache` on the server; deployments leave those caches alone.
