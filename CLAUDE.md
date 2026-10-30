@@ -7,14 +7,23 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Laravel 13 / PHP 8.3 API that stores every MyBizGate tenant's uploads (images and documents). It is one of several
 independent Git repositories inside the `mybizgate` workspace (see `../AGENTS.md`); business data lives in the
 separate `client-api`, and tenant frontends call both. **There is no database**: the filesystem is the whole store,
-and `metadata.json` beside each file is the record. `README.md` documents the HTTP API, environment variables,
-production layout and release flow in detail; do not duplicate it here, keep it in sync when behaviour changes.
+and `metadata.json` beside each file is the record. `config/database.php` and `database/` were removed on purpose
+(the framework defaults cover booting); do not add migrations, models or `DB_*` settings here. `README.md`
+documents the HTTP API, environment variables, production layout and release flow in detail; do not duplicate it
+here, keep it in sync when behaviour changes.
+
+Two files here are written **for consumers**, not for this service: `attachment_integration.md` is the contract
+every consuming API (client-api first) follows to attach media to business records, and
+`create_media_attachments.sql` is the MySQL schema of the `media_attachments` table those consumers create in
+**their own** database (media-api never reads it). Whenever an endpoint, validation rule, limit, error code or
+header changes, update `attachment_integration.md` in the same commit, and keep the `.sql` file identical to
+client-api's `create_media_attachments` migration.
 
 ## Commands
 
 ```bash
 composer setup                      # composer install + .env from .env.example + key:generate
-php artisan serve --port=8001       # client-api uses 8000; media-api uses 8001
+composer dev                        # php artisan serve --port=8001 (client-api uses 8000; media-api uses 8001)
 php artisan test                    # whole suite (Unit + Feature), runs on a faked disk
 php artisan test --filter=MediaUploadTest                      # one class
 php artisan test --filter='MediaAccessTest::test_thumbnail_is_served' # one method
@@ -57,8 +66,8 @@ Layers under `app/`:
 
 Cross-cutting rules the code relies on:
 
-- **Access model**: write endpoints (`index`, `store`, `update`, `destroy`) require the header and are scoped to
-  that tenant. Read endpoints are outside the middleware: with a header the lookup is tenant-scoped, without one
+- **Access model**: write endpoints (`index`, `store`, `update`, `assign`, `destroy`) require the header and are
+  scoped to that tenant. Read endpoints are outside the middleware: with a header the lookup is tenant-scoped, without one
   only `public` media resolves (`MediaController::readable()`). Private media gets `Cache-Control: private, no-store`.
 - **Errors**: throw `App\Exceptions\MediaException` (`badRequest`, `forbidden`, `notFound`, `validation`,
   `server`); `bootstrap/app.php` renders it and `ValidationException` into the `{"success": false, "message",
@@ -68,6 +77,13 @@ Cross-cutting rules the code relies on:
   driven by `.env`. `APP_URL` is forced as the root URL (`AppServiceProvider::boot`) so generated URLs are correct
   behind the shared-hosting proxy; this is skipped in tests.
 - `PUT /media/{id}` also accepts `POST` (optionally `_method=PUT`) because PHP only parses multipart for POST.
+  `PATCH /media/{id}` (`assign`) changes only `entity_id` in `metadata.json`; files are untouched.
+- `GET /api/v1/ping` is a deployment smoke route; the deploy workflow asserts on it, so keep it.
+- **Performance**: there is no index besides the directory tree. `find()` globs the tenant's module/year/month
+  directories, `findAnyTenant()` (header-less public reads) globs across all tenants, and `list()` reads every
+  `metadata.json` under the matching module/year/month before paging. Consumers are told (in
+  `attachment_integration.md` §6) to build URLs from ids and keep their own table for hot paths; if a tenant grows
+  past roughly ten thousand items, add a rebuildable index behind `MediaRepositoryInterface`, not a second store.
 
 ## Tests
 

@@ -54,43 +54,27 @@ php -d upload_max_filesize=26M -d post_max_size=28M -S 127.0.0.1:8001 -t public
 
 ## Environment
 
-```env
-APP_NAME="MyBizGate Media API"
-APP_ENV=local
-APP_DEBUG=true
-APP_URL=http://127.0.0.1:8001
+`.env.example` is the single template for every environment. Section **A** holds the only values that differ
+between local development and production (each line carries its `production:` value as a comment), section **B**
+is identical everywhere, and section **C** lists the optional media limits with their `config/media.php` defaults.
+There is no database and no `DB_*` setting.
 
-SESSION_DRIVER=file
-CACHE_STORE=file
-QUEUE_CONNECTION=sync
+Local: `cp .env.example .env && php artisan key:generate`.
 
-MEDIA_STORAGE_PATH=/home/jul/Workspace/mybizgate/uploads/media-api
-
-MEDIA_IMAGE_MAX_WIDTH=1600
-MEDIA_IMAGE_MAX_HEIGHT=1600
-MEDIA_IMAGE_WEBP_QUALITY=80
-MEDIA_THUMB_MAX_WIDTH=400
-MEDIA_THUMB_MAX_HEIGHT=400
-MEDIA_THUMB_WEBP_QUALITY=75
-MEDIA_IMAGE_MAX_SIZE_KB=10240
-MEDIA_FILE_MAX_SIZE_KB=25600
-MEDIA_CORS_ORIGINS=              # optional extra origins, comma separated
-```
-
-Production:
+Production (`/home/mybizgat/app/media-api/.env`, server-managed, never uploaded): copy `.env.example` and set
+section A to
 
 ```env
-APP_NAME="MyBizGate Media API"
 APP_ENV=production
 APP_DEBUG=false
 APP_URL=https://media-api.mybizgate.com
-
-SESSION_DRIVER=file
-CACHE_STORE=file
-QUEUE_CONNECTION=sync
-
+APP_KEY=                      # php artisan key:generate --show, generated once, never changed
 MEDIA_STORAGE_PATH=/home/mybizgat/data/media-api/uploads
+LOG_LEVEL=warning
 ```
+
+`MEDIA_CORS_ORIGINS` accepts extra comma-separated origins; `localhost:5173` and every `https://*.mybizgate.com`
+origin are allowed without listing them.
 
 ## Main API Endpoints
 
