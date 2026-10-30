@@ -1,12 +1,9 @@
-# MyBizGate Media API - application-only production deployment
-#
-# Push branch 'deploy' -> test Laravel -> deploy PHP application files via FTPS.
-# The application and its vendor/ dependencies have already been installed on Shinjiru.
-#
-# The dedicated FTP account must be rooted at /home/mybizgat/app/media-api.
-# NEVER sync production .env, vendor/, storage/ or bootstrap/cache/.
-# Uploaded media is outside this FTP root at /data/media-api/uploads/.
-# IMPORTANT: If composer.lock changes, update production vendor/ separately before deploying.
+# MyBizGate Media API - production deployment
+# This workflow deploys Laravel application code only over FTPS.
+# Prerequisite: vendor/ is already installed on the production server and
+# compatible with composer.lock. Update production vendor/ when dependencies change.
+# The FTP account is rooted at /home/mybizgat/app/media-api.
+# Never upload production .env, vendor/, storage/, or bootstrap/cache/.
 
 name: Deploy Production
 
@@ -29,6 +26,7 @@ env:
 
 jobs:
   deploy:
+    name: Deploy Laravel application
     runs-on: ubuntu-latest
     environment: production
     timeout-minutes: 45
@@ -68,8 +66,6 @@ jobs:
         run: |
           rm -f .env
           mkdir -p release
-
-          # Do not package dependencies or directories owned by the production server.
           rsync -a ./ release/ \
             --exclude='.git/' \
             --exclude='.github/' \
@@ -88,9 +84,13 @@ jobs:
             --exclude='database/*.sqlite' \
             --exclude='database/*.sqlite-*'
 
-          # The health endpoint exposes this commit to verify a real deployment.
           mkdir -p release/bootstrap
-          jq -n \
-            --arg commit "$GITHUB_SHA" \
-            --arg ref "$GITHUB_REF" \
-            --arg repository "$GITHUB_REPOSITORY" \
+          jq -n --arg commit "$GITHUB_SHA" --arg deployed_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            '{commit: $commit, deployed_at: $deployed_at}' > release/bootstrap/deployment.json
+          cat release/bootstrap/deployment.json
+
+      - name: Verify application-only package
+        run: |
+          test -f release/artisan
+          test -f release/bootstrap/app.php
+          test -f release/bootstrap/deployment.json
