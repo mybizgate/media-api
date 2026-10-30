@@ -80,9 +80,7 @@ jobs:
             --exclude='phpunit.xml' \
             --exclude='.phpunit.result.cache' \
             --exclude='node_modules/' \
-            --exclude='AUTO_DEPLOY_WF.md' \
-            --exclude='database/*.sqlite' \
-            --exclude='database/*.sqlite-*'
+            --exclude='AUTO_DEPLOY_WF.md'
 
           mkdir -p release/bootstrap
           jq -n --arg commit "$GITHUB_SHA" --arg deployed_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
