@@ -133,25 +133,34 @@ jobs:
           LIVE=""
           RESPONSE=""
 
-          for attempt in $(seq 1 18); do
-            RESPONSE=$(curl -sS --max-time 30 \
+          # Shared hosting can answer with a non-JSON page (403/5xx) for a few minutes after a
+          # large FTPS sync; keep polling, and log status + body head so a failure is diagnosable.
+          for attempt in $(seq 1 30); do
+            CODE=$(curl -sS --max-time 30 -o /tmp/media-api-health.json -w '%{http_code}' \
               -H "Cache-Control: no-cache" \
               -H "Pragma: no-cache" \
-              "${HEALTH_URL}?nocache=${GITHUB_SHA}-${attempt}" || true)
+              "${HEALTH_URL}?nocache=${GITHUB_SHA}-${attempt}" || echo "000")
+            RESPONSE=$(cat /tmp/media-api-health.json 2>/dev/null || true)
             LIVE=$(printf '%s' "$RESPONSE" | jq -r '.deployment.commit // empty' 2>/dev/null || true)
-            echo "attempt ${attempt}: live commit '${LIVE}' (expected '${EXPECTED}')"
+            echo "attempt ${attempt}: HTTP ${CODE}, live commit '${LIVE}' (expected '${EXPECTED}')"
+            if [ -z "$LIVE" ]; then
+              echo "  body: $(printf '%s' "$RESPONSE" | head -c 200 | tr -d '\n')"
+            fi
             if [ "$LIVE" = "$EXPECTED" ]; then
               break
             fi
             sleep 10
           done
 
-          printf '%s\n' "$RESPONSE" | jq .
-
           if [ "$LIVE" != "$EXPECTED" ]; then
+            echo "Last response (HTTP ${CODE}):"
+            printf '%s\n' "$RESPONSE" | head -c 2000
+            echo
             echo "::error::Production reports commit '${LIVE}', expected '${EXPECTED}'. Deployment NOT verified."
             exit 1
           fi
+
+          printf '%s\n' "$RESPONSE" | jq .
 
           printf '%s' "$RESPONSE" | jq -e '
             .status == "ok"
