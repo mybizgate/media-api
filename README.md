@@ -115,7 +115,7 @@ const MEDIA_API_BASE_URL = import.meta.env.VITE_MEDIA_API_BASE_URL
 fetch(`${MEDIA_API_BASE_URL}/media`, { method: 'POST', headers: { 'X-Client-Code': 'lzhub' }, body: formData })
 ```
 
-CORS allows `http://localhost:5173`, `https://lzhub.mybizgate.com` and any `https://*.mybizgate.com` origin with the `Accept`, `Content-Type` and `X-Client-Code` headers (`config/cors.php`).
+CORS allows `http://localhost:5173`, `https://lzhub.mybizgate.com` and any `https://*.mybizgate.com` origin at any depth (`www.lzhub.`, `staging.demo.`) with the `Accept`, `Content-Type` and `X-Client-Code` headers (`config/cors.php`).
 
 ## Production Structure
 

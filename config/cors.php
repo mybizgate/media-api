@@ -28,9 +28,11 @@ return [
         'https://lzhub.mybizgate.com',
     ], $extraOrigins),
 
-    // Any first-level MyBizGate subdomain (tenant sites, demos, staging).
+    // Any https MyBizGate subdomain at any depth (tenant sites, www.<tenant>,
+    // demos, staging). Anchored on the full host, so look-alike domains such
+    // as mybizgate.com.evil.com or evil-mybizgate.com are rejected.
     'allowed_origins_patterns' => [
-        '#^https://[a-z0-9-]+\.mybizgate\.com$#',
+        '#^https://([a-z0-9-]+\.)+mybizgate\.com$#',
     ],
 
     'allowed_headers' => ['Accept', 'Content-Type', 'X-Client-Code', 'Authorization', 'X-Requested-With'],

@@ -140,9 +140,18 @@ class MediaAccessTest extends TestCase
             'HTTP_ACCESS_CONTROL_REQUEST_METHOD' => 'POST',
         ])->assertHeaderMissing('Access-Control-Allow-Origin');
 
-        $this->call('OPTIONS', '/api/v1/media', [], [], [], [
-            'HTTP_ORIGIN' => 'https://catparadise.mybizgate.com',
-            'HTTP_ACCESS_CONTROL_REQUEST_METHOD' => 'POST',
-        ])->assertHeader('Access-Control-Allow-Origin', 'https://catparadise.mybizgate.com');
+        foreach (['https://catparadise.mybizgate.com', 'https://www.lzhub.mybizgate.com', 'https://staging.demo.mybizgate.com'] as $origin) {
+            $this->call('OPTIONS', '/api/v1/media', [], [], [], [
+                'HTTP_ORIGIN' => $origin,
+                'HTTP_ACCESS_CONTROL_REQUEST_METHOD' => 'POST',
+            ])->assertHeader('Access-Control-Allow-Origin', $origin);
+        }
+
+        foreach (['http://www.lzhub.mybizgate.com', 'https://mybizgate.com', 'https://mybizgate.com.evil.com', 'https://evil-mybizgate.com'] as $origin) {
+            $this->call('OPTIONS', '/api/v1/media', [], [], [], [
+                'HTTP_ORIGIN' => $origin,
+                'HTTP_ACCESS_CONTROL_REQUEST_METHOD' => 'POST',
+            ])->assertHeaderMissing('Access-Control-Allow-Origin');
+        }
     }
 }
